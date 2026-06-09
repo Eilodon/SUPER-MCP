@@ -12,7 +12,8 @@ export interface IRateLimiter {
   close?(): Promise<void>;
 }
 
-class MemoryRateLimiter implements IRateLimiter {
+export class MemoryRateLimiter implements IRateLimiter {
+  private cleanupTimer?: NodeJS.Timeout;
   private records = new Map<string, {
     windowStart: number;
     count: number;
@@ -22,16 +23,26 @@ class MemoryRateLimiter implements IRateLimiter {
     updatedAt: number;
   }>();
 
-  async check(tenantId: string): Promise<RateLimitResult> {
-    if (!ENV.ENABLE_RATE_LIMIT) return { allowed: true };
+  constructor() {
+    if (ENV.ENABLE_RATE_LIMIT) {
+      this.cleanupTimer = setInterval(() => this.cleanupExpired(), 60_000);
+      this.cleanupTimer.unref?.();
+    }
+  }
 
-    const now = Date.now();
+  private cleanupExpired(now = Date.now()): void {
     const ttlMs = Math.max(ENV.RATE_LIMIT_WINDOW_MS * 2, 24 * 60 * 60 * 1000);
     for (const [key, record] of this.records.entries()) {
       if (record.backoffEndsAt <= now && now - record.updatedAt > ttlMs) {
         this.records.delete(key);
       }
     }
+  }
+
+  async check(tenantId: string): Promise<RateLimitResult> {
+    if (!ENV.ENABLE_RATE_LIMIT) return { allowed: true };
+
+    const now = Date.now();
 
     let record = this.records.get(tenantId);
     if (!record) {
@@ -61,6 +72,10 @@ class MemoryRateLimiter implements IRateLimiter {
     }
 
     return { allowed: true };
+  }
+
+  async close(): Promise<void> {
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
   }
 }
 

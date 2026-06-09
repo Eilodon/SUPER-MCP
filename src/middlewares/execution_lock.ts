@@ -4,7 +4,7 @@ import { ENV } from "../config/env.js";
 import { getRedisClient } from "../storage/redis_client.js";
 
 export interface IExecutionLockManager {
-  withTenantLock<T>(tenantId: string, operation: () => Promise<T>): Promise<T>;
+  withTenantLock<T>(tenantId: string, operation: (signal?: AbortSignal) => Promise<T>): Promise<T>;
   close?(): Promise<void>;
 }
 
@@ -24,24 +24,24 @@ async function enqueueLocal<T>(tenantId: string, operation: () => Promise<T>): P
 }
 
 class MemoryExecutionLockManager implements IExecutionLockManager {
-  async withTenantLock<T>(tenantId: string, operation: () => Promise<T>): Promise<T> {
-    return enqueueLocal(tenantId, operation);
+  async withTenantLock<T>(tenantId: string, operation: (signal?: AbortSignal) => Promise<T>): Promise<T> {
+    return enqueueLocal(tenantId, () => operation());
   }
 }
 
-class RedisExecutionLockManager implements IExecutionLockManager {
+export class RedisExecutionLockManager implements IExecutionLockManager {
   private redis: Redis;
   private readonly ttlMs = ENV.MCP_LOCK_TTL_MS;
 
-  constructor() {
-    this.redis = getRedisClient();
+  constructor(redisClient?: Redis) {
+    this.redis = redisClient || getRedisClient();
   }
 
   private getKey(tenantId: string): string {
     return `super_mcp:lock:${ENV.MCP_PROJECT_ID}:${tenantId}`;
   }
 
-  async withTenantLock<T>(tenantId: string, operation: () => Promise<T>): Promise<T> {
+  async withTenantLock<T>(tenantId: string, operation: (signal?: AbortSignal) => Promise<T>): Promise<T> {
     return enqueueLocal(tenantId, async () => {
       const key = this.getKey(tenantId);
       const token = randomUUID();
@@ -51,21 +51,39 @@ class RedisExecutionLockManager implements IExecutionLockManager {
         const acquired = await this.redis.set(key, token, "PX", this.ttlMs, "NX");
         if (acquired === "OK") {
           let stopped = false;
-          const heartbeat = setInterval(() => {
-            if (stopped) return;
-            const script = `
-              if redis.call('GET', KEYS[1]) == ARGV[1] then
-                return redis.call('PEXPIRE', KEYS[1], ARGV[2])
-              end
-              return 0
-            `;
-            this.redis.eval(script, 1, key, token, this.ttlMs).catch(err => {
+          let consecutiveHeartbeatFailures = 0;
+          let refreshInFlight = false;
+          const controller = new AbortController();
+
+          const heartbeat = setInterval(async () => {
+            if (stopped || refreshInFlight) return;
+            refreshInFlight = true;
+            try {
+              const script = `
+                if redis.call('GET', KEYS[1]) == ARGV[1] then
+                  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+                end
+                return 0
+              `;
+              const result = await this.redis.eval(script, 1, key, token, this.ttlMs);
+              if (Number(result) !== 1) {
+                controller.abort(new Error("[SUPER-MCP] Tenant execution lock was lost."));
+                return;
+              }
+              consecutiveHeartbeatFailures = 0;
+            } catch (err) {
+              consecutiveHeartbeatFailures += 1;
               console.error("[SUPER-MCP] Failed to refresh tenant execution lock:", err);
-            });
+              if (consecutiveHeartbeatFailures >= 2) {
+                controller.abort(new Error("[SUPER-MCP] Tenant execution lock heartbeat failed repeatedly."));
+              }
+            } finally {
+              refreshInFlight = false;
+            }
           }, Math.max(1000, Math.floor(this.ttlMs / 3)));
 
           try {
-            return await operation();
+            return await operation(controller.signal);
           } finally {
             stopped = true;
             clearInterval(heartbeat);

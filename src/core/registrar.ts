@@ -333,11 +333,13 @@ export function registerTools<T = Record<string, unknown>>(
             await globalIdempotencyManager.release(idempotencyKey);
             throw new Error("[SUPER-MCP] Server is shutting down and is not accepting new async tasks.");
           }
-          const taskPromise = globalExecutionLockManager.withTenantLock(tenantId, async () => {
+          const taskPromise = globalExecutionLockManager.withTenantLock(tenantId, async (lockSignal) => {
             const stopHeartbeat = startIdempotencyHeartbeat(idempotencyKey);
+            const signals = [extra.signal, lockSignal].filter(Boolean) as AbortSignal[];
+            const combinedSignal = signals.length > 0 ? (signals.length === 1 ? signals[0] : AbortSignal.any(signals)) : undefined;
             try {
               const state = await getState(tenantId, { reload: true });
-              const result = await executeTool(tool, cleanArgs, state, extra.signal);
+              const result = await executeTool(tool, cleanArgs, state, combinedSignal);
               await saveState(state);
               await globalIdempotencyManager.commit(idempotencyKey, result);
               await telemetry.log("async_task_completed", { tool: tool.name, tenantId, requestId: ctx.requestId });
@@ -357,10 +359,12 @@ export function registerTools<T = Record<string, unknown>>(
           return { content: [{ type: "text", text: `[SUPER-MCP] Async Task started. Vui lòng dùng tool 'check_task_status' với job_id: ${idempotencyKey} để kiểm tra kết quả.` }] };
         }
 
-        return globalExecutionLockManager.withTenantLock(tenantId, async () => {
+        return globalExecutionLockManager.withTenantLock(tenantId, async (lockSignal) => {
+          const signals = [extra.signal, lockSignal].filter(Boolean) as AbortSignal[];
+          const combinedSignal = signals.length > 0 ? (signals.length === 1 ? signals[0] : AbortSignal.any(signals)) : undefined;
           try {
             const state = await getState(tenantId, { reload: true });
-            const result = await executeTool(tool, cleanArgs, state, extra.signal);
+            const result = await executeTool(tool, cleanArgs, state, combinedSignal);
             await saveState(state);
             await globalIdempotencyManager.commit(idempotencyKey, result);
             await telemetry.log("tool_execution_completed", { tool: tool.name, tenantId, requestId: ctx.requestId });

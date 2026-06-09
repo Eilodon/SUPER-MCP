@@ -47,11 +47,13 @@ const EnvSchema = z.object({
   MCP_ALLOW_SECRET_WRITE: z.boolean().default(false),
 
   MCP_TOOL_TIMEOUT_MS: z.number().int().min(1000).max(3600000).default(300000),
-  MCP_LOCK_TTL_MS: z.number().int().min(5000).max(3600000).default(600000),
+  MCP_LOCK_TTL_MS: z.number().int().min(5000).max(3600000).default(420000),
   MCP_IDEMPOTENCY_WORKING_TTL_SECONDS: z.number().int().min(30).max(86400).default(600),
-  MCP_IDEMPOTENCY_RESULT_TTL_SECONDS: z.number().int().min(60).max(2592000).default(604800),
+  MCP_IDEMPOTENCY_RESULT_TTL_SECONDS: z.number().int().min(60).max(2592000).default(3600),
   MCP_REDIS_MAX_BACKUPS: z.number().int().min(1).max(1000).default(25),
   MCP_HTTP_BODY_LIMIT: z.string().default("100kb"),
+  MCP_TELEMETRY_MAX_BYTES: z.number().int().min(1024).default(1024 * 1024),
+  MCP_TELEMETRY_MAX_BACKUPS: z.number().int().min(1).max(100).default(5),
 });
 
 const DEV_ENCRYPTION_KEYS = new Set([
@@ -80,7 +82,7 @@ function parseList(raw: string): string[] {
 function loadEnv() {
   const rawEnv = {
     STORAGE_DRIVER: process.env.STORAGE_DRIVER,
-    TELEMETRY_DRIVER: process.env.TELEMETRY_DRIVER,
+    TELEMETRY_DRIVER: process.env.TELEMETRY_DRIVER || ((process.env.TRANSPORT_DRIVER || "stdio") === "stdio" ? "stderr" : undefined),
     TRANSPORT_DRIVER: process.env.TRANSPORT_DRIVER,
     HTTP_HOST: process.env.HTTP_HOST,
     HTTP_PORT: parseIntEnv(process.env.HTTP_PORT),
@@ -119,6 +121,8 @@ function loadEnv() {
     MCP_IDEMPOTENCY_RESULT_TTL_SECONDS: parseIntEnv(process.env.MCP_IDEMPOTENCY_RESULT_TTL_SECONDS),
     MCP_REDIS_MAX_BACKUPS: parseIntEnv(process.env.MCP_REDIS_MAX_BACKUPS),
     MCP_HTTP_BODY_LIMIT: process.env.MCP_HTTP_BODY_LIMIT,
+    MCP_TELEMETRY_MAX_BYTES: parseIntEnv(process.env.MCP_TELEMETRY_MAX_BYTES),
+    MCP_TELEMETRY_MAX_BACKUPS: parseIntEnv(process.env.MCP_TELEMETRY_MAX_BACKUPS),
   };
 
   const parsed = EnvSchema.safeParse(rawEnv);
@@ -137,6 +141,11 @@ function loadEnv() {
 
   if (env.STORAGE_DRIVER === "redis" && !env.MCP_ENCRYPTION_KEY) {
     console.error("FATAL: MCP_ENCRYPTION_KEY is required when STORAGE_DRIVER=redis");
+    process.exit(1);
+  }
+
+  if (env.STORAGE_DRIVER !== "redis" && env.MCP_IDEMPOTENCY_RESULT_TTL_SECONDS > 3600) {
+    console.error("FATAL: MCP_IDEMPOTENCY_RESULT_TTL_SECONDS must be <= 3600 when STORAGE_DRIVER is fs or memory. Use STORAGE_DRIVER=redis for long-lived idempotency.");
     process.exit(1);
   }
 
