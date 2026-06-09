@@ -55,6 +55,20 @@ export class RedisExecutionLockManager implements IExecutionLockManager {
           let refreshInFlight = false;
           const controller = new AbortController();
 
+          let rejectLockLost!: (error: Error) => void;
+          const lockLost = new Promise<never>((_, reject) => {
+            rejectLockLost = reject;
+          });
+          lockLost.catch(() => {}); // prevent unhandled rejection warning
+
+          function abortLock(error: Error): void {
+            if (!controller.signal.aborted) {
+              controller.abort(error);
+              rejectLockLost(error);
+            }
+          }
+
+
           const heartbeat = setInterval(async () => {
             if (stopped || refreshInFlight) return;
             refreshInFlight = true;
@@ -67,7 +81,7 @@ export class RedisExecutionLockManager implements IExecutionLockManager {
               `;
               const result = await this.redis.eval(script, 1, key, token, this.ttlMs);
               if (Number(result) !== 1) {
-                controller.abort(new Error("[SUPER-MCP] Tenant execution lock was lost."));
+                abortLock(new Error("[SUPER-MCP] Tenant execution lock was lost."));
                 return;
               }
               consecutiveHeartbeatFailures = 0;
@@ -75,7 +89,7 @@ export class RedisExecutionLockManager implements IExecutionLockManager {
               consecutiveHeartbeatFailures += 1;
               console.error("[SUPER-MCP] Failed to refresh tenant execution lock:", err);
               if (consecutiveHeartbeatFailures >= 2) {
-                controller.abort(new Error("[SUPER-MCP] Tenant execution lock heartbeat failed repeatedly."));
+                abortLock(new Error("[SUPER-MCP] Tenant execution lock heartbeat failed repeatedly."));
               }
             } finally {
               refreshInFlight = false;
@@ -83,7 +97,10 @@ export class RedisExecutionLockManager implements IExecutionLockManager {
           }, Math.max(1000, Math.floor(this.ttlMs / 3)));
 
           try {
-            return await operation(controller.signal);
+            return await Promise.race([
+              operation(controller.signal),
+              lockLost,
+            ]);
           } finally {
             stopped = true;
             clearInterval(heartbeat);

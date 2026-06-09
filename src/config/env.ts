@@ -49,7 +49,7 @@ const EnvSchema = z.object({
   MCP_TOOL_TIMEOUT_MS: z.number().int().min(1000).max(3600000).default(300000),
   MCP_LOCK_TTL_MS: z.number().int().min(5000).max(3600000).default(420000),
   MCP_IDEMPOTENCY_WORKING_TTL_SECONDS: z.number().int().min(30).max(86400).default(600),
-  MCP_IDEMPOTENCY_RESULT_TTL_SECONDS: z.number().int().min(60).max(2592000).default(3600),
+  MCP_IDEMPOTENCY_RESULT_TTL_SECONDS: z.number().int().min(60).max(2592000),
   MCP_REDIS_MAX_BACKUPS: z.number().int().min(1).max(1000).default(25),
   MCP_HTTP_BODY_LIMIT: z.string().default("100kb"),
   MCP_TELEMETRY_MAX_BYTES: z.number().int().min(1024).default(1024 * 1024),
@@ -80,6 +80,7 @@ function parseList(raw: string): string[] {
 }
 
 function loadEnv() {
+  const storageDriver = process.env.STORAGE_DRIVER || "fs";
   const rawEnv = {
     STORAGE_DRIVER: process.env.STORAGE_DRIVER,
     TELEMETRY_DRIVER: process.env.TELEMETRY_DRIVER || ((process.env.TRANSPORT_DRIVER || "stdio") === "stdio" ? "stderr" : undefined),
@@ -118,7 +119,7 @@ function loadEnv() {
     MCP_TOOL_TIMEOUT_MS: parseIntEnv(process.env.MCP_TOOL_TIMEOUT_MS),
     MCP_LOCK_TTL_MS: parseIntEnv(process.env.MCP_LOCK_TTL_MS),
     MCP_IDEMPOTENCY_WORKING_TTL_SECONDS: parseIntEnv(process.env.MCP_IDEMPOTENCY_WORKING_TTL_SECONDS),
-    MCP_IDEMPOTENCY_RESULT_TTL_SECONDS: parseIntEnv(process.env.MCP_IDEMPOTENCY_RESULT_TTL_SECONDS),
+    MCP_IDEMPOTENCY_RESULT_TTL_SECONDS: parseIntEnv(process.env.MCP_IDEMPOTENCY_RESULT_TTL_SECONDS) ?? (storageDriver === "redis" ? 604800 : 3600),
     MCP_REDIS_MAX_BACKUPS: parseIntEnv(process.env.MCP_REDIS_MAX_BACKUPS),
     MCP_HTTP_BODY_LIMIT: process.env.MCP_HTTP_BODY_LIMIT,
     MCP_TELEMETRY_MAX_BYTES: parseIntEnv(process.env.MCP_TELEMETRY_MAX_BYTES),

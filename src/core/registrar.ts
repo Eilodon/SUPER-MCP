@@ -180,6 +180,12 @@ function sanitizeResult(rawResult: ToolResult): { result: ToolResult; wasTruncat
   return { result: { content: sanitizedContent }, wasTruncated };
 }
 
+function isExecutionLockError(error: unknown): boolean {
+  const text = String(error instanceof Error ? error.message : error);
+  return text.includes("Tenant execution lock was lost")
+    || text.includes("Tenant execution lock heartbeat failed repeatedly");
+}
+
 async function executeTool<T>(tool: ToolDefinition<T>, args: unknown, state: BaseState<T>, signal?: AbortSignal): Promise<ToolResult> {
   ensureToolPolicy(tool);
   globalGuardrails.ensureToolPhase(tool.name, state.phase, tool.allowedPhases);
@@ -345,6 +351,12 @@ export function registerTools<T = Record<string, unknown>>(
               await telemetry.log("async_task_completed", { tool: tool.name, tenantId, requestId: ctx.requestId });
             } catch (error) {
               await telemetry.log("async_task_failed", { tool: tool.name, tenantId, requestId: ctx.requestId, error: String(error) });
+
+              if (isExecutionLockError(error)) {
+                await globalIdempotencyManager.release(idempotencyKey);
+                throw error;
+              }
+
               await globalIdempotencyManager.commit(idempotencyKey, {
                 content: [{ type: "text", text: `[SUPER-MCP] Async Task Failed: ${String(error)}` }]
               });

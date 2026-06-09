@@ -60,4 +60,22 @@ describe("env validation", () => {
 
     expect(mod.ENV.MCP_LOCK_TTL_MS).toBe(420000);
   });
+
+  test("defaults Redis idempotency result TTL to 7 days", async () => {
+    const mod = await importEnvWith({
+      STORAGE_DRIVER: "redis",
+      REDIS_URL: "redis://localhost:6379",
+      MCP_ENCRYPTION_KEY: "x".repeat(32),
+    });
+
+    expect(mod.ENV.MCP_IDEMPOTENCY_RESULT_TTL_SECONDS).toBe(604800);
+  });
+
+  test("defaults non-Redis idempotency result TTL to 1 hour", async () => {
+    const mod = await importEnvWith({
+      STORAGE_DRIVER: "fs",
+    });
+
+    expect(mod.ENV.MCP_IDEMPOTENCY_RESULT_TTL_SECONDS).toBe(3600);
+  });
 });

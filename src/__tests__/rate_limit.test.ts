@@ -1,5 +1,12 @@
 import { describe, expect, test, vi, beforeEach, afterEach } from "vitest";
-import { MemoryRateLimiter } from "../middlewares/rate_limit.js";
+
+async function importRateLimiterWithRateLimit() {
+  vi.resetModules();
+  vi.stubEnv("ENABLE_RATE_LIMIT", "true");
+  vi.stubEnv("RATE_LIMIT_WINDOW_MS", "100");
+  const mod = await import("../middlewares/rate_limit.js");
+  return mod.MemoryRateLimiter;
+}
 
 describe("MemoryRateLimiter", () => {
   beforeEach(() => {
@@ -10,15 +17,23 @@ describe("MemoryRateLimiter", () => {
     vi.unstubAllEnvs();
   });
 
-  test("cleans up expired records", async () => {
-    vi.stubEnv("ENABLE_RATE_LIMIT", "true");
+  test("does not sweep records on check and cleans them in background", async () => {
+    vi.useFakeTimers();
+    const MemoryRateLimiter = await importRateLimiterWithRateLimit();
     const limiter = new MemoryRateLimiter();
-    
-    const result = await limiter.check("tenant-1");
-    expect(result.allowed).toBe(true);
-    
-    vi.advanceTimersByTime(25 * 60 * 60 * 1000);
-    
+
+    await limiter.check("tenant-1");
+
+    const records = (limiter as any).records as Map<string, unknown>;
+    expect(records.size).toBe(1);
+
+    vi.setSystemTime(Date.now() + 25 * 60 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(records.size).toBe(0);
+
     await limiter.close();
+    vi.useRealTimers();
   });
 });
+
