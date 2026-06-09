@@ -1,0 +1,44 @@
+version: 1
+generated_from: "HolySeed-pattern review and SUPER-MCP hardening pass"
+items:
+  DEBT-001-plugin-os-isolation:
+    status: open
+    current_control: "Allowlist, optional SHA-256 allowlist, capability declarations, safe mode, manifest pinning."
+    limitation: "Plugins still run in-process when MCP_PLUGIN_ISOLATION_MODE=policy."
+    resolution_trigger: "External worker/container or WASM runner is implemented and MCP_PLUGIN_ISOLATION_MODE=external no longer fails fast."
+    owner_hint: "runtime-security"
+
+  DEBT-002-crypto-erasure:
+    status: open
+    current_control: "Versioned scrypt envelope with per-blob salt; raw base64url DEK supported."
+    limitation: "No per-tenant/per-user KMS-backed DEK registry, so crypto-erasure is not yet an operational primitive."
+    resolution_trigger: "State encryption uses envelope encryption with tenant/user DEKs and auditable key deletion."
+    owner_hint: "storage-security"
+
+  DEBT-003-native-mcp-tasks:
+    status: open
+    current_control: "Custom idempotency + task tracker + governed check_task_status."
+    limitation: "Async semantics are not yet native MCP Tasks."
+    resolution_trigger: "TypeScript SDK and target clients support selected MCP Tasks version end-to-end."
+    owner_hint: "protocol"
+
+  DEBT-004-full-oauth-pkce:
+    status: open
+    current_control: "JWT resource-server mode, protected resource metadata, per-tool requiredScopes."
+    limitation: "No built-in authorization-server discovery, PKCE initiation, or refresh-token rotation."
+    resolution_trigger: "Deployment integrates a real OAuth/OIDC authorization server and validates Resource Indicators."
+    owner_hint: "auth"
+
+  DEBT-005-output-firewall-coverage:
+    status: monitoring
+    current_control: "Output firewall redacts common credentials, Luhn-valid cards, SSN-like identifiers, and prompt-injection markers."
+    limitation: "PII detection is pattern-based and intentionally conservative; no DLP/classifier backend."
+    resolution_trigger: "Sensitive deployments define a tested DLP policy or external scanner integration."
+    owner_hint: "data-safety"
+
+  DEBT-006-redis-trauma-registry:
+    status: implemented
+    current_control: "Memory and Redis rate limiters use bounded violation records with severity EMA and exponential backoff."
+    limitation: "Backoff policy is deterministic and conservative; it is not yet tuned from production incident data."
+    resolution_trigger: "Production telemetry calibrates severity EMA/backoff thresholds by tenant risk tier."
+    owner_hint: "reliability"
